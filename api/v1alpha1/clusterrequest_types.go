@@ -20,7 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ClusterRequestSpec defines the desired state of ClusterRequest
+// ClusterRequestSpec defines the desired state of ClusterRequest.
 type ClusterRequestSpec struct {
 	// MatchType specifies the criteria for selecting hosts
 	// +kubebuilder:validation:Required
@@ -36,7 +36,7 @@ type ClusterRequestSpec struct {
 	HostSets []HostSet `json:"hostSets"`
 }
 
-// ClusterRequestStatus defines the observed state of ClusterRequest
+// ClusterRequestStatus defines the observed state of ClusterRequest.
 type ClusterRequestStatus struct {
 	// MatchType specifies the criteria for selecting hosts
 	// +kubebuilder:validation:Required
@@ -75,7 +75,6 @@ type HostSet struct {
 	Size int32 `json:"size"`
 }
 
-// ClusterRequest is the Schema for the clusterrequests API
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=cr;creq
@@ -83,19 +82,19 @@ type HostSet struct {
 // +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.state.conditions[?(@.type == 'Ready')].reason"
 // +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.matchType"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+
+// ClusterRequest is the Schema for the clusterrequests API.
 type ClusterRequest struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// Spec defines the desired state of ClusterRequest
-	Spec ClusterRequestSpec `json:"spec,omitempty"`
-
-	// Status defines the observed state of ClusterRequest
+	Spec   ClusterRequestSpec   `json:"spec,omitempty"`
 	Status ClusterRequestStatus `json:"status,omitempty"`
 }
 
-// ClusterRequestList contains a list of ClusterRequest
 // +kubebuilder:object:root=true
+
+// ClusterRequestList contains a list of ClusterRequest.
 type ClusterRequestList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

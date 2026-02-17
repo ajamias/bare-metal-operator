@@ -1,0 +1,9 @@
+apiVersion: cloudkit.openshift.io/v1alpha1
+kind: ClusterRequest
+metadata:
+  labels:
+    app.kubernetes.io/name: bare-metal-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: clusterrequest-sample
+spec:
+  # TODO(user): Add fields here

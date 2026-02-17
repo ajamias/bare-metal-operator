@@ -14,11 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
-	//"maps"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -28,7 +27,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	crlog "sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1alpha1 "github.com/ajamias/bare-metal-operator/api/v1alpha1"
 )
@@ -41,12 +40,14 @@ type ClusterRequestReconciler struct {
 
 const ClusterRequestFinalizer = "cloudkit.openshift.io/cluster-request"
 
-//+kubebuilder:rbac:groups=cloudkit.openshift.io,resources=clusterrequests,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=cloudkit.openshift.io,resources=clusterrequests/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=cloudkit.openshift.io,resources=clusterrequests/finalizers,verbs=update
+// +kubebuilder:rbac:groups=cloudkit.openshift.io,resources=clusterrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cloudkit.openshift.io,resources=clusterrequests/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=cloudkit.openshift.io,resources=clusterrequests/finalizers,verbs=update
 
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
 func (r *ClusterRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := crlog.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
 	log.Info("Starting reconcile for ClusterRequest", "namespacedName", req.NamespacedName)
 
@@ -85,12 +86,13 @@ func (r *ClusterRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 func (r *ClusterRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.ClusterRequest{}).
+		Named("clusterrequest").
 		Complete(r)
 }
 
 // handleUpdate processes ClusterRequest creation or specification updates
 func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
-	log := crlog.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
 	clusterRequest.InitializeStatusConditions()
 
@@ -133,7 +135,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 
 func (r *ClusterRequestReconciler) allocateHosts(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
 	/*
-		log := crlog.FromContext(ctx)
+		log := logf.FromContext(ctx)
 
 		expectedHostSets := clusterRequest.Spec.HostSets
 		actualHostSets := clusterRequest.Status.HostSets
@@ -153,7 +155,7 @@ func (r *ClusterRequestReconciler) allocateHosts(ctx context.Context, clusterReq
 
 // handleDeletion handles the cleanup when a ClusterRequest is being deleted
 func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
-	log := crlog.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
 	log.Info("Processing ClusterRequest deletion", "name", clusterRequest.Name)
 	clusterRequest.SetStatusCondition(
