@@ -48,7 +48,7 @@ type ClusterRequestStatus struct {
 	// +kubebuilder:validation:Required
 	// +listType=map
 	// +listMapKey=hostClass
-	HostSets []HostSet `json:"hostSets,omitempty"`
+	HostSets []HostSet `json:"hostSets"`
 
 	// ObservedGeneration is the last generation we processed
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -78,8 +78,8 @@ type HostSet struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=cr;creq
-// +kubebuilder:printcolumn:name="Name",type="string",JSONPath=".metadata.name"
-// +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.state.conditions[?(@.type == 'Ready')].reason"
+// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.state.conditions[?(@.type == 'Ready')].reason"
+// +kubebuilder:printcolumn:name="Hosts Status",type="string",JSONPath=".status.state.conditions[?(@.type == 'HostsReady')].reason"
 // +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.matchType"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 

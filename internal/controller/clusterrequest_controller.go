@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -60,7 +61,7 @@ func (r *ClusterRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	oldstatus := clusterRequest.Status.DeepCopy()
 
 	var result ctrl.Result
-	if !clusterRequest.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !clusterRequest.DeletionTimestamp.IsZero() {
 		log.Info("Handling deletion")
 		result, err = r.handleDeletion(ctx, clusterRequest)
 	} else if clusterRequest.Status.ObservedGeneration != clusterRequest.Generation {
@@ -91,64 +92,46 @@ func (r *ClusterRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // handleUpdate processes ClusterRequest creation or specification updates
+// nolint:unparam
 func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	clusterRequest.InitializeStatusConditions()
 
-	log.Info("DEBUG: printing clusterRequest", "clusterRequest", clusterRequest)
+	if clusterRequest.Status.MatchType == "" {
+		clusterRequest.Status.MatchType = clusterRequest.Spec.MatchType
+	}
 
-	return ctrl.Result{}, nil
+	if clusterRequest.Status.HostSets == nil {
+		clusterRequest.Status.HostSets = make([]v1alpha1.HostSet, 0)
+	}
 
-	/*
-		// Add finalizer for proper cleanup
-		if controllerutil.AddFinalizer(clusterRequest, ClusterRequestFinalizer) {
-			if err := r.Update(ctx, clusterRequest); err != nil {
-				log.Error(err, "Failed to add finalizer")
-				return ctrl.Result{}, err
-			}
-		}
+	if clusterRequest.Status.MatchType != clusterRequest.Spec.MatchType {
+		log.Info("Current MatchType is different from specified one")
 
-		// Mark as not ready while processing changes
-		clusterRequest.SetStatusCondition(
-			v1alpha1.ClusterRequestConditionTypeReady,
-			metav1.ConditionFalse,
-			v1alpha1.ClusterRequestReasonProgressing,
-			"Cluster request is being updated",
-		)
+		log.Info("TODO: get Host info associated with this cluster from either Host CRs or BM Inventory")
+		log.Info("TODO: for each host.Type != MatchType, free it and update the ClusterRequest's HostSet")
+	}
 
-		//	if clusterRequest.Spec.MatchType != clusterRequest.Status.MatchType {
-		//		if len(clusterRequest.Status.HostSet)
-		//	}
+	if !slices.Equal(clusterRequest.Status.HostSets, clusterRequest.Spec.HostSets) {
+		log.Info("Current HostSets are different from specified ones")
 
-		clusterRequest.Status.ObservedGeneration = clusterRequest.Generation
+		log.Info("TODO: get Host info with matching MatchType from either Host CRs or BM Inventory")
+		log.Info("TODO: if we need to add but there are not enough available Hosts, requeue reconcile ")
+		log.Info("TODO: for each host, mark it used/freed by this ClusterRequest and update the HostSet")
 
-		if err := r.Status().Update(ctx, clusterRequest); err != nil {
-			log.Error(err, "Failed to update status")
-			return ctrl.Result{}, err
-		}
+		// for now, just make them equal
+		clusterRequest.Status.HostSets = clusterRequest.Spec.HostSets
+	}
 
-		// Process host allocation
-		return r.allocateHosts(ctx, clusterRequest)
-	*/
-}
+	// check on hosts, if not all hosts are ready, requeue reconcile
 
-func (r *ClusterRequestReconciler) allocateHosts(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
-	/*
-		log := logf.FromContext(ctx)
-
-		expectedHostSets := clusterRequest.Spec.HostSets
-		actualHostSets := clusterRequest.Status.HostSets
-
-		if maps.Equal(expectedHostSets, actualHostSets) {
-			clusterRequest.SetStatusCondition(
-				v1alpha1.ClusterRequestConditionTypeReady,
-				metav1.ConditionFalse,
-				v1alpha1.ClusterRequestReasonProgressing,
-				"Cluster request is being updated",
-			)
-		}
-	*/
+	clusterRequest.SetStatusCondition(
+		v1alpha1.ClusterRequestConditionTypeHostsReady,
+		metav1.ConditionTrue,
+		v1alpha1.ClusterRequestReasonHostsAvailable,
+		"Hosts are all available",
+	)
 
 	return ctrl.Result{}, nil
 }
