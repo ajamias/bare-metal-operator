@@ -20,50 +20,82 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // ClusterRequestSpec defines the desired state of ClusterRequest
 type ClusterRequestSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// MatchType specifies the criteria for selecting hosts
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=Bare;Agent;Virtual
+	// +kubebuilder:default=Bare
+	MatchType string `json:"matchType"`
 
-	HostSets map[string]int `json:"hostSets,omitempty"`
+	// HostSets defines the number of hosts needed for each host set type.
+	// Each HostSet must have a unique hostClass value.
+	// +kubebuilder:validation:Required
+	// +listType=map
+	// +listMapKey=hostClass
+	HostSets []HostSet `json:"hostSets"`
 }
 
 // ClusterRequestStatus defines the observed state of ClusterRequest
 type ClusterRequestStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// MatchType specifies the criteria for selecting hosts
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=Bare;Agent;Virtual
+	// +kubebuilder:default=Bare
+	MatchType string `json:"matchType"`
 
-	State    ClusterState   `json:"state,omitempty"`
-	HostSets map[string]int `json:"hostSets,omitempty"`
+	// HostSets shows the current allocation of hosts
+	// +kubebuilder:validation:Required
+	// +listType=map
+	// +listMapKey=hostClass
+	HostSets []HostSet `json:"hostSets,omitempty"`
+
+	// ObservedGeneration is the last generation we processed
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// LastUpdated is the timestamp when the status was last updated
+	// +kubebuilder:validation:Optional
+	LastUpdated *metav1.Time `json:"lastUpdated,omitempty"`
+
+	// Conditions represent the latest available observations of the ClusterRequest state
+	// +kubebuilder:validation:Optional
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
-type ClusterState string
+// HostSet defines a set of hosts with the same class and required count
+type HostSet struct {
+	// HostClass specifies the class/type of hosts needed (e.g., "worker", "master", "storage")
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=^[a-zA-Z0-9_.]*$
+	HostClass string `json:"hostClass"`
 
-const (
-	ClusterStateUnspecified ClusterState = "Unspecified"
-	ClusterStateProgressing ClusterState = "Progressing"
-	ClusterStateReady       ClusterState = "Ready"
-	ClusterStateFailed      ClusterState = "Failed"
-)
-
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
+	// Size specifies the number of hosts required for this host class
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	Size int32 `json:"size"`
+}
 
 // ClusterRequest is the Schema for the clusterrequests API
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=cr;creq
+// +kubebuilder:printcolumn:name="Name",type="string",JSONPath=".metadata.name"
+// +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.state.conditions[?(@.type == 'Ready')].reason"
+// +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.matchType"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 type ClusterRequest struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ClusterRequestSpec   `json:"spec,omitempty"`
+	// Spec defines the desired state of ClusterRequest
+	Spec ClusterRequestSpec `json:"spec,omitempty"`
+
+	// Status defines the observed state of ClusterRequest
 	Status ClusterRequestStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:object:root=true
-
 // ClusterRequestList contains a list of ClusterRequest
+// +kubebuilder:object:root=true
 type ClusterRequestList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

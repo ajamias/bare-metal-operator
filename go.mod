@@ -1,8 +1,6 @@
 module github.com/ajamias/bare-metal-operator
 
-go 1.25
-
-toolchain go1.25.0
+go 1.24
 
 require (
 	github.com/onsi/ginkgo/v2 v2.6.0
