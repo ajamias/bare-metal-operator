@@ -18,8 +18,7 @@ package controller
 
 import (
 	"context"
-	"slices"
-	"time"
+	"maps"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -50,22 +49,19 @@ const ClusterRequestFinalizer = "cloudkit.openshift.io/cluster-request"
 func (r *ClusterRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	log.Info("Starting reconcile for ClusterRequest", "namespacedName", req.NamespacedName)
-
 	clusterRequest := &v1alpha1.ClusterRequest{}
 	err := r.Get(ctx, req.NamespacedName, clusterRequest)
 	if err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	log.Info("Starting reconcile", "namespacedName", req.NamespacedName, "name", clusterRequest.Name)
 
 	oldstatus := clusterRequest.Status.DeepCopy()
 
 	var result ctrl.Result
 	if !clusterRequest.DeletionTimestamp.IsZero() {
-		log.Info("Handling deletion")
 		result, err = r.handleDeletion(ctx, clusterRequest)
-	} else if clusterRequest.Status.ObservedGeneration != clusterRequest.Generation {
-		log.Info("Handling update")
+	} else {
 		result, err = r.handleUpdate(ctx, clusterRequest)
 	}
 
@@ -92,18 +88,25 @@ func (r *ClusterRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // handleUpdate processes ClusterRequest creation or specification updates
-// nolint:unparam
+// nolint
 func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+	log.Info("Updating ClusterRequest", "name", clusterRequest.Name)
 
 	clusterRequest.InitializeStatusConditions()
+
+	if controllerutil.AddFinalizer(clusterRequest, ClusterRequestFinalizer) {
+		if err := r.Update(ctx, clusterRequest); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	if clusterRequest.Status.MatchType == "" {
 		clusterRequest.Status.MatchType = clusterRequest.Spec.MatchType
 	}
 
 	if clusterRequest.Status.HostSets == nil {
-		clusterRequest.Status.HostSets = make([]v1alpha1.HostSet, 0)
+		clusterRequest.Status.HostSets = make(map[string]v1alpha1.HostSet, 0)
 	}
 
 	if clusterRequest.Status.MatchType != clusterRequest.Spec.MatchType {
@@ -113,7 +116,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 		log.Info("TODO: for each host.Type != MatchType, free it and update the ClusterRequest's HostSet")
 	}
 
-	if !slices.Equal(clusterRequest.Status.HostSets, clusterRequest.Spec.HostSets) {
+	if !maps.Equal(clusterRequest.Status.HostSets, clusterRequest.Spec.HostSets) {
 		log.Info("Current HostSets are different from specified ones")
 
 		log.Info("TODO: get Host info with matching MatchType from either Host CRs or BM Inventory")
@@ -130,52 +133,66 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 		v1alpha1.ClusterRequestConditionTypeHostsReady,
 		metav1.ConditionTrue,
 		v1alpha1.ClusterRequestReasonHostsAvailable,
-		"Hosts are all available",
+		"All Hosts are available",
+	)
+
+	clusterRequest.SetStatusCondition(
+		v1alpha1.ClusterRequestConditionTypeReady,
+		metav1.ConditionTrue,
+		v1alpha1.ClusterRequestReasonReady,
+		"All Hosts are available",
 	)
 
 	return ctrl.Result{}, nil
 }
 
 // handleDeletion handles the cleanup when a ClusterRequest is being deleted
+// nolint
 func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+	log.Info("Deleting ClusterRequest", "name", clusterRequest.Name)
 
-	log.Info("Processing ClusterRequest deletion", "name", clusterRequest.Name)
 	clusterRequest.SetStatusCondition(
 		v1alpha1.ClusterRequestConditionTypeReady,
 		metav1.ConditionFalse,
 		v1alpha1.ClusterRequestReasonDeleting,
 		"ClusterRequest is being deleted",
 	)
+	clusterRequest.SetStatusCondition(
+		v1alpha1.ClusterRequestConditionTypeHostsReady,
+		metav1.ConditionFalse,
+		v1alpha1.ClusterRequestReasonHostsFreeing,
+		"ClusterRequest's hosts are being freed",
+	)
 
-	hostsCondition := meta.FindStatusCondition(clusterRequest.Status.Conditions, v1alpha1.ClusterRequestConditionTypeHostsReady)
-
-	if hostsCondition.Reason == v1alpha1.ClusterRequestReasonHostsFreed {
-		if controllerutil.ContainsFinalizer(clusterRequest, ClusterRequestFinalizer) {
-			if controllerutil.RemoveFinalizer(clusterRequest, ClusterRequestFinalizer) {
-				if err := r.Update(ctx, clusterRequest); err != nil {
-					log.Error(err, "Failed to remove finalizer")
-					return ctrl.Result{}, err
-				}
+	for hostClass, hostSet := range clusterRequest.Status.HostSets {
+		// for now, just delete
+		for _ = range hostSet.Size {
+			log.Info("TODO: mark host as freed, let Host operator take care of Host CR deletion, might update need to update BM inventory", "hostClass", hostClass)
+			log.Info("TODO: if error occurs, update status and requeue reconcile")
+			clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
+				Size: clusterRequest.Status.HostSets[hostClass].Size - 1,
 			}
 		}
-	} else if hostsCondition.Reason != v1alpha1.ClusterRequestReasonHostsFreeing {
-		// TODO: here, I would set each Host CR associated with this ClusterRequest to free itself
-		//	 but for now I will log it
-		log.Info("TODO: now I will free all the hosts associated with this ClusterRequest")
-
-		log.Info("Setting HostsReady to False because HostsFreeing")
-		clusterRequest.SetStatusCondition(
-			v1alpha1.ClusterRequestConditionTypeHostsReady,
-			metav1.ConditionFalse,
-			v1alpha1.ClusterRequestReasonHostsFreeing,
-			"Freeing allocated hosts for cluster deletion",
-		)
-
-		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+		if clusterRequest.Status.HostSets[hostClass].Size == 0 {
+			delete(clusterRequest.Status.HostSets, hostClass)
+		}
 	}
 
-	log.Info("Successfully processed ClusterRequest deletion", "name", clusterRequest.Name)
+	clusterRequest.SetStatusCondition(
+		v1alpha1.ClusterRequestConditionTypeHostsReady,
+		metav1.ConditionFalse,
+		v1alpha1.ClusterRequestReasonHostsFreed,
+		"ClusterRequest's hosts are now free",
+	)
+
+	if controllerutil.RemoveFinalizer(clusterRequest, ClusterRequestFinalizer) {
+		if err := r.Update(ctx, clusterRequest); err != nil {
+			log.Error(err, "Failed to remove finalizer")
+			return ctrl.Result{}, err
+		}
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -206,6 +223,4 @@ func (r *ClusterRequestReconciler) updateReadyCondition(clusterRequest *v1alpha1
 		readyReason,
 		readyReason,
 	)
-
-	clusterRequest.Status.ObservedGeneration = clusterRequest.Generation
 }

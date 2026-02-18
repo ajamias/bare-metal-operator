@@ -18,10 +18,10 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.state.conditions[?(@.type == 'Ready')].reason
+    - jsonPath: .status.conditions[?(@.type == 'Ready')].reason
       name: Status
       type: string
-    - jsonPath: .status.state.conditions[?(@.type == 'HostsReady')].reason
+    - jsonPath: .status.conditions[?(@.type == 'HostsReady')].reason
       name: Hosts Status
       type: string
     - jsonPath: .spec.matchType
@@ -56,18 +56,10 @@ spec:
             description: ClusterRequestSpec defines the desired state of ClusterRequest.
             properties:
               hostSets:
-                description: |-
-                  HostSets defines the number of hosts needed for each host set type.
-                  Each HostSet must have a unique hostClass value.
-                items:
+                additionalProperties:
                   description: HostSet defines a set of hosts with the same class
                     and required count
                   properties:
-                    hostClass:
-                      description: HostClass specifies the class/type of hosts needed
-                        (e.g., "worker", "master", "storage")
-                      pattern: ^[a-zA-Z0-9_.]*$
-                      type: string
                     size:
                       description: Size specifies the number of hosts required for
                         this host class
@@ -75,13 +67,11 @@ spec:
                       minimum: 1
                       type: integer
                   required:
-                  - hostClass
                   - size
                   type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - hostClass
-                x-kubernetes-list-type: map
+                description: HostSets defines the number of hosts needed for each
+                  host set type.
+                type: object
               matchType:
                 default: Bare
                 description: MatchType specifies the criteria for selecting hosts
@@ -156,16 +146,10 @@ spec:
                   type: object
                 type: array
               hostSets:
-                description: HostSets shows the current allocation of hosts
-                items:
+                additionalProperties:
                   description: HostSet defines a set of hosts with the same class
                     and required count
                   properties:
-                    hostClass:
-                      description: HostClass specifies the class/type of hosts needed
-                        (e.g., "worker", "master", "storage")
-                      pattern: ^[a-zA-Z0-9_.]*$
-                      type: string
                     size:
                       description: Size specifies the number of hosts required for
                         this host class
@@ -173,13 +157,10 @@ spec:
                       minimum: 1
                       type: integer
                   required:
-                  - hostClass
                   - size
                   type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - hostClass
-                x-kubernetes-list-type: map
+                description: HostSets shows the current allocation of hosts
+                type: object
               lastUpdated:
                 description: LastUpdated is the timestamp when the status was last
                   updated
@@ -193,10 +174,6 @@ spec:
                 - Agent
                 - Virtual
                 type: string
-              observedGeneration:
-                description: ObservedGeneration is the last generation we processed
-                format: int64
-                type: integer
             required:
             - hostSets
             - matchType

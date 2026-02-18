@@ -29,11 +29,8 @@ type ClusterRequestSpec struct {
 	MatchType string `json:"matchType"`
 
 	// HostSets defines the number of hosts needed for each host set type.
-	// Each HostSet must have a unique hostClass value.
 	// +kubebuilder:validation:Required
-	// +listType=map
-	// +listMapKey=hostClass
-	HostSets []HostSet `json:"hostSets"`
+	HostSets map[string]HostSet `json:"hostSets"`
 }
 
 // ClusterRequestStatus defines the observed state of ClusterRequest.
@@ -46,12 +43,7 @@ type ClusterRequestStatus struct {
 
 	// HostSets shows the current allocation of hosts
 	// +kubebuilder:validation:Required
-	// +listType=map
-	// +listMapKey=hostClass
-	HostSets []HostSet `json:"hostSets"`
-
-	// ObservedGeneration is the last generation we processed
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	HostSets map[string]HostSet `json:"hostSets"`
 
 	// LastUpdated is the timestamp when the status was last updated
 	// +kubebuilder:validation:Optional
@@ -64,11 +56,6 @@ type ClusterRequestStatus struct {
 
 // HostSet defines a set of hosts with the same class and required count
 type HostSet struct {
-	// HostClass specifies the class/type of hosts needed (e.g., "worker", "master", "storage")
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=^[a-zA-Z0-9_.]*$
-	HostClass string `json:"hostClass"`
-
 	// Size specifies the number of hosts required for this host class
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
@@ -78,8 +65,8 @@ type HostSet struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=cr;creq
-// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.state.conditions[?(@.type == 'Ready')].reason"
-// +kubebuilder:printcolumn:name="Hosts Status",type="string",JSONPath=".status.state.conditions[?(@.type == 'HostsReady')].reason"
+// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.type == 'Ready')].reason"
+// +kubebuilder:printcolumn:name="Hosts Status",type="string",JSONPath=".status.conditions[?(@.type == 'HostsReady')].reason"
 // +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.matchType"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 

@@ -89,8 +89,10 @@ func (in *ClusterRequestSpec) DeepCopyInto(out *ClusterRequestSpec) {
 	*out = *in
 	if in.HostSets != nil {
 		in, out := &in.HostSets, &out.HostSets
-		*out = make([]HostSet, len(*in))
-		copy(*out, *in)
+		*out = make(map[string]HostSet, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 }
 
@@ -109,8 +111,10 @@ func (in *ClusterRequestStatus) DeepCopyInto(out *ClusterRequestStatus) {
 	*out = *in
 	if in.HostSets != nil {
 		in, out := &in.HostSets, &out.HostSets
-		*out = make([]HostSet, len(*in))
-		copy(*out, *in)
+		*out = make(map[string]HostSet, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 	if in.LastUpdated != nil {
 		in, out := &in.LastUpdated, &out.LastUpdated
