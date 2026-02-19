@@ -18,7 +18,9 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -202,9 +204,47 @@ func main() {
 		os.Exit(1)
 	}
 
+	osacInventoryEndpoint, ok := os.LookupEnv("OSAC_INVENTORY_URL")
+	if !ok {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_INVENTORY_URL not found")
+		os.Exit(1)
+	}
+	osacManagementEndpoint, ok := os.LookupEnv("OSAC_MANAGEMENT_URL")
+	if !ok {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_MANAGEMENT_URL not found")
+		os.Exit(1)
+	}
+	authToken, ok := os.LookupEnv("OSAC_AUTH_TOKEN")
+	if !ok {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_AUTH_TOKEN not found")
+		os.Exit(1)
+	}
+
+	osacInventoryUrl, err := url.Parse(osacInventoryEndpoint)
+	if err != nil {
+		setupLog.Error(err, "OSAC_INVENTORY_URL is not a valid URL")
+		os.Exit(1)
+	}
+	osacManagementUrl, err := url.Parse(osacManagementEndpoint)
+	if err != nil {
+		setupLog.Error(err, "OSAC_MANAGEMENT_URL is not a valid URL")
+		os.Exit(1)
+	}
+	if osacInventoryUrl.Scheme != "http" && osacInventoryUrl.Scheme != "https" {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_INVENTORY_URL only supports http or https")
+		os.Exit(1)
+	}
+	if osacManagementUrl.Scheme != "http" && osacManagementUrl.Scheme != "https" {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_MANAGEMENT_URL only supports http or https")
+		os.Exit(1)
+	}
+
 	if err := (&controller.ClusterRequestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		OsacInventoryUrl:  osacInventoryUrl,
+		OsacManagementUrl: osacManagementUrl,
+		AuthToken:         authToken,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ClusterRequest")
 		os.Exit(1)

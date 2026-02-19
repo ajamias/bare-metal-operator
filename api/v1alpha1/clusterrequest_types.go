@@ -59,7 +59,7 @@ type HostSet struct {
 	// Size specifies the number of hosts required for this host class
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
-	Size int32 `json:"size"`
+	Size int `json:"size"`
 }
 
 // +kubebuilder:object:root=true
