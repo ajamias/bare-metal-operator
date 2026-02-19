@@ -21,7 +21,6 @@ import (
 	"maps"
 
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -65,14 +64,10 @@ func (r *ClusterRequestReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		result, err = r.handleUpdate(ctx, clusterRequest)
 	}
 
-	if err == nil {
-		r.updateReadyCondition(clusterRequest)
-
-		if !equality.Semantic.DeepEqual(clusterRequest.Status, *oldstatus) {
-			log.Info("status requires update")
-			if statusErr := r.Status().Update(ctx, clusterRequest); statusErr != nil {
-				return result, statusErr
-			}
+	if err == nil && !equality.Semantic.DeepEqual(clusterRequest.Status, *oldstatus) {
+		log.Info("status requires update")
+		if statusErr := r.Status().Update(ctx, clusterRequest); statusErr != nil {
+			return result, statusErr
 		}
 	}
 
@@ -96,9 +91,9 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 	clusterRequest.InitializeStatusConditions()
 
 	if controllerutil.AddFinalizer(clusterRequest, ClusterRequestFinalizer) {
-		if err := r.Update(ctx, clusterRequest); err != nil {
-			return ctrl.Result{}, err
-		}
+		// Update should fire another reconcile event, so just return
+		err := r.Update(ctx, clusterRequest)
+		return ctrl.Result{}, err
 	}
 
 	if clusterRequest.Status.MatchType == "" {
@@ -186,41 +181,13 @@ func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRe
 		"ClusterRequest's hosts are now free",
 	)
 
+	// At this point, all underlying infrastructure is freed from
+	// the ClusterRequest, so just return
 	if controllerutil.RemoveFinalizer(clusterRequest, ClusterRequestFinalizer) {
-		if err := r.Update(ctx, clusterRequest); err != nil {
-			log.Error(err, "Failed to remove finalizer")
-			return ctrl.Result{}, err
-		}
+		// Update should fire another reconcile event, so just return
+		err := r.Update(ctx, clusterRequest)
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
-}
-
-// updateReadyCondition updates the Ready condition based on the HostsReady condition
-func (r *ClusterRequestReconciler) updateReadyCondition(clusterRequest *v1alpha1.ClusterRequest) {
-	hostsCondition := meta.FindStatusCondition(clusterRequest.Status.Conditions, v1alpha1.ClusterRequestConditionTypeHostsReady)
-
-	readyStatus := metav1.ConditionFalse
-	readyReason := v1alpha1.ClusterRequestReasonFailed
-
-	if hostsCondition != nil {
-		switch hostsCondition.Reason {
-		case v1alpha1.ClusterRequestReasonHostsAvailable:
-			readyStatus = metav1.ConditionTrue
-			readyReason = v1alpha1.ClusterRequestReasonReady
-		case v1alpha1.ClusterRequestReasonHostsAllocating:
-			readyReason = v1alpha1.ClusterRequestReasonProgressing
-		case v1alpha1.ClusterRequestReasonHostsFreeing, v1alpha1.ClusterRequestReasonHostsFreed:
-			readyReason = v1alpha1.ClusterRequestReasonDeleting
-		default:
-			readyReason = v1alpha1.ClusterRequestReasonFailed
-		}
-	}
-
-	clusterRequest.SetStatusCondition(
-		v1alpha1.ClusterRequestConditionTypeReady,
-		readyStatus,
-		readyReason,
-		readyReason,
-	)
 }
