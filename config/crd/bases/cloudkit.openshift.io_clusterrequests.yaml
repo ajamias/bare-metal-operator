@@ -63,7 +63,6 @@ spec:
                     size:
                       description: Size specifies the number of hosts required for
                         this host class
-                      format: int32
                       minimum: 1
                       type: integer
                   required:
@@ -153,7 +152,6 @@ spec:
                     size:
                       description: Size specifies the number of hosts required for
                         this host class
-                      format: int32
                       minimum: 1
                       type: integer
                   required:
