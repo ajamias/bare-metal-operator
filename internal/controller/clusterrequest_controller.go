@@ -159,7 +159,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 				v1alpha1.ClusterRequestReasonHostsUnavailable,
 				"Failed to get hosts from inventory",
 			)
-			return ctrl.Result{}, err
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 		}
 		if len(hosts) < hostSet.Size {
 			err := errors.New("Insufficient hosts")
@@ -198,9 +198,10 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 					v1alpha1.ClusterRequestReasonHostsUnavailable,
 					"Failed to get hosts from inventory",
 				)
-				return ctrl.Result{}, err
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 			}
 
+			// TODO: can use goroutines
 			for i := range hosts {
 				log.Info("Free host", "node id", hosts[i].NodeId)
 				err := r.setHostAttachment(ctx, httpClient, hosts[i].NodeId, "")
@@ -212,7 +213,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 						v1alpha1.ClusterRequestReasonHostsUnavailable,
 						"Failed to free some hosts",
 					)
-					return ctrl.Result{}, err
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 				}
 				clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
 					Size: clusterRequest.Status.HostSets[hostClass].Size - 1,
@@ -256,6 +257,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 				return ctrl.Result{}, err
 			}
 
+			// TODO: can use goroutines
 			for i := range hosts {
 				err := r.setHostAttachment(ctx, httpClient, hosts[i].NodeId, clusterId)
 				if err != nil {
@@ -266,7 +268,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 						v1alpha1.ClusterRequestReasonHostsUnavailable,
 						"Failed to "+op+" some hosts",
 					)
-					return ctrl.Result{}, err
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 				}
 				clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
 					Size: clusterRequest.Status.HostSets[hostClass].Size + delta,
@@ -284,6 +286,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 	}
 
 	log.Info("Check on hosts, if not all hosts are ready, requeue reconcile")
+	// TODO: can use goroutines???
 	for hostClass, hostSet := range clusterRequest.Spec.HostSets {
 		hosts, err := r.getHosts(ctx, httpClient, hostClass, hostSet.Size, clusterRequest.Spec.MatchType, string(clusterRequest.UID))
 		if err != nil {
@@ -294,7 +297,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 				v1alpha1.ClusterRequestReasonHostsUnavailable,
 				"Failed to get hosts from inventory",
 			)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 		}
 
 		for i := range hosts {
@@ -307,7 +310,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 					v1alpha1.ClusterRequestReasonHostsUnavailable,
 					"Failed to verify that all hosts are ready",
 				)
-				return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 			}
 		}
 	}
@@ -348,14 +351,41 @@ func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRe
 		"ClusterRequest's hosts are being freed",
 	)
 
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// TODO: can use goroutines
 	for hostClass, hostSet := range clusterRequest.Status.HostSets {
-		// for now, just delete
-		for _ = range hostSet.Size {
-			log.Info("TODO: mark host as freed, let Host operator take care of Host CR deletion, might update need to update BM inventory", "hostClass", hostClass)
-			log.Info("TODO: if error occurs, update status and requeue reconcile")
+		hosts, err := r.getHosts(ctx, httpClient, hostClass, hostSet.Size, clusterRequest.Status.MatchType, string(clusterRequest.UID))
+		if err != nil {
+			log.Error(err, "Failed to get hosts from inventory during deletion")
+			clusterRequest.SetStatusCondition(
+				v1alpha1.ClusterRequestConditionTypeHostsReady,
+				metav1.ConditionFalse,
+				v1alpha1.ClusterRequestReasonHostsUnavailable,
+				"Failed to get hosts from inventory during deletion",
+			)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+		}
+
+		// TODO: can use goroutines
+		for i := range hosts {
+			err := r.setHostAttachment(ctx, httpClient, hosts[i].NodeId, "")
+			if err != nil {
+				log.Error(err, "Failed to free host", "node id", hosts[i].NodeId)
+				clusterRequest.SetStatusCondition(
+					v1alpha1.ClusterRequestConditionTypeHostsReady,
+					metav1.ConditionFalse,
+					v1alpha1.ClusterRequestReasonHostsUnavailable,
+					"Failed to free some hosts",
+				)
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+			}
 			clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
 				Size: clusterRequest.Status.HostSets[hostClass].Size - 1,
 			}
+			log.Info("Succeeded to free host", "node id", hosts[i].NodeId)
 		}
 		if clusterRequest.Status.HostSets[hostClass].Size == 0 {
 			delete(clusterRequest.Status.HostSets, hostClass)
