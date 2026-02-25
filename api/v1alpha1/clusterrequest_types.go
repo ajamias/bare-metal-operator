@@ -30,7 +30,12 @@ type ClusterRequestSpec struct {
 
 	// HostSets defines the number of hosts needed for each host set type.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self.all(k, v, k == v.hostClass)"
 	HostSets map[string]HostSet `json:"hostSets"`
+
+	// Networks defines the vlans that connect hosts together
+	// +kubebuilder:validation:Required
+	Networks []Network `json:"networks"`
 }
 
 // ClusterRequestStatus defines the observed state of ClusterRequest.
@@ -56,10 +61,50 @@ type ClusterRequestStatus struct {
 
 // HostSet defines a set of hosts with the same class and required count
 type HostSet struct {
+	// +kubebuilder:
+	HostClass string `json:"hostClass"`
+
 	// Size specifies the number of hosts required for this host class
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	Size int `json:"size"`
+}
+
+// Network defines a set of hosts to be put on the same vlan
+type Network struct {
+	// Name is the name of the network
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// VLAN is the ID of the network
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4094
+	VLAN int `json:"vlan"`
+
+	// HostSets specifies the hosts that should be connected to this network
+	// +kubebuilder:validation:Required
+	HostSets map[string]HostSet `json:"hostSets"`
+}
+
+type HostSpec struct {
+	// rule="self == oldSelf",message="field is immutable"
+	NodeId string `json:"nodeId"`
+
+	// rule="self == oldSelf",message="field is immutable"
+	MatchType string `json:"matchType"`
+
+	// rule="self == oldSelf",message="field is immutable"
+	HostClass string `json:"hostClass"`
+
+	Online bool `json:"online"`
+}
+
+type Host struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec HostSpec `json:"spec,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -43,6 +42,7 @@ import (
 type ClusterRequestReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
+	HttpClient        *http.Client
 	OsacInventoryUrl  *url.URL
 	OsacManagementUrl *url.URL
 	AuthToken         string
@@ -55,6 +55,7 @@ type HostResponse struct {
 	Hosts []Host `json:"nodes"`
 }
 
+// TODO: replace this with future Host type
 // Host represents a single host from the inventory
 type Host struct {
 	NodeId         string         `json:"uuid"`
@@ -116,8 +117,7 @@ func (r *ClusterRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	   return and re-reconcile or try to free/allocate the rest?
 */
 
-// handleUpdate processes ClusterRequest creation or specification updates
-// nolint
+// handleUpdate processes ClusterRequest creation or specification updates.
 func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	log.Info("Updating ClusterRequest", "name", clusterRequest.Name)
@@ -138,9 +138,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 		clusterRequest.Status.HostSets = make(map[string]v1alpha1.HostSet, 0)
 	}
 
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	// TODO: verify Network hosts matches with HostSets
 
 	log.Info("Checking for available target hosts")
 	hostClassToHosts := map[string][]Host{}
@@ -150,7 +148,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 			continue
 		}
 
-		hosts, err := r.getHosts(ctx, httpClient, hostClass, hostSet.Size, clusterRequest.Spec.MatchType, "")
+		hosts, err := r.getHosts(ctx, hostClass, hostSet.Size, clusterRequest.Spec.MatchType, "")
 		if err != nil {
 			log.Error(err, "Failed to get hosts from inventory")
 			clusterRequest.SetStatusCondition(
@@ -162,7 +160,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 		}
 		if len(hosts) < hostSet.Size {
-			err := errors.New("Insufficient hosts")
+			err := errors.New("insufficient hosts")
 			log.Error(
 				err,
 				"There are not enough available hosts in the inventory",
@@ -188,8 +186,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 		// free attached hosts
 		// TODO: can use goroutines
 		for hostClass, hostSet := range clusterRequest.Status.HostSets {
-			log.Info("List Host info from inventory")
-			hosts, err := r.getHosts(ctx, httpClient, hostClass, hostSet.Size, clusterRequest.Status.MatchType, string(clusterRequest.UID))
+			hosts, err := r.getHosts(ctx, hostClass, hostSet.Size, clusterRequest.Status.MatchType, string(clusterRequest.UID))
 			if err != nil {
 				log.Error(err, "Failed to get hosts from inventory")
 				clusterRequest.SetStatusCondition(
@@ -201,23 +198,9 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 			}
 
-			// TODO: can use goroutines
-			for i := range hosts {
-				log.Info("Free host", "node id", hosts[i].NodeId)
-				err := r.setHostAttachment(ctx, httpClient, hosts[i].NodeId, "")
-				if err != nil {
-					log.Error(err, "Failed to free host", "node id", hosts[i].NodeId)
-					clusterRequest.SetStatusCondition(
-						v1alpha1.ClusterRequestConditionTypeHostsReady,
-						metav1.ConditionFalse,
-						v1alpha1.ClusterRequestReasonHostsUnavailable,
-						"Failed to free some hosts",
-					)
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-				}
-				clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
-					Size: clusterRequest.Status.HostSets[hostClass].Size - 1,
-				}
+			err = r.setHostsAttachment(ctx, clusterRequest, hosts, "")
+			if err != nil {
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 			}
 		}
 
@@ -238,42 +221,20 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 				continue
 			}
 
-			var (
-				op        string
-				clusterId string
-				delta     int
-			)
+			var clusterId string
 			if sizeDifference > 0 && sizeDifference == len(hosts) {
-				op = "add"
 				clusterId = string(clusterRequest.UID)
-				delta = 1
 			} else if sizeDifference < 0 && -sizeDifference == len(hosts) {
-				op = "free"
 				clusterId = ""
-				delta = -1
 			} else {
-				err := errors.New("Something went wrong")
+				err := errors.New("something went wrong")
 				log.Error(err, "Fail")
 				return ctrl.Result{}, err
 			}
 
-			// TODO: can use goroutines
-			for i := range hosts {
-				err := r.setHostAttachment(ctx, httpClient, hosts[i].NodeId, clusterId)
-				if err != nil {
-					log.Error(err, "Failed to "+op+" host", "node id", hosts[i].NodeId)
-					clusterRequest.SetStatusCondition(
-						v1alpha1.ClusterRequestConditionTypeHostsReady,
-						metav1.ConditionFalse,
-						v1alpha1.ClusterRequestReasonHostsUnavailable,
-						"Failed to "+op+" some hosts",
-					)
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-				}
-				clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
-					Size: clusterRequest.Status.HostSets[hostClass].Size + delta,
-				}
-				log.Info("Succeeded to "+op+" host", "node id", hosts[i].NodeId)
+			err := r.setHostsAttachment(ctx, clusterRequest, hosts, clusterId)
+			if err != nil {
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 			}
 		}
 
@@ -286,9 +247,8 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 	}
 
 	log.Info("Check on hosts, if not all hosts are ready, requeue reconcile")
-	// TODO: can use goroutines???
 	for hostClass, hostSet := range clusterRequest.Spec.HostSets {
-		hosts, err := r.getHosts(ctx, httpClient, hostClass, hostSet.Size, clusterRequest.Spec.MatchType, string(clusterRequest.UID))
+		hosts, err := r.getHosts(ctx, hostClass, hostSet.Size, clusterRequest.Spec.MatchType, string(clusterRequest.UID))
 		if err != nil {
 			log.Error(err, "Failed to get hosts from inventory")
 			clusterRequest.SetStatusCondition(
@@ -302,7 +262,7 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 
 		for i := range hosts {
 			if hosts[i].ProvisionState != "available" {
-				err := errors.New("Hosts unavailable")
+				err := errors.New("hosts unavailable")
 				log.Error(err, "Not all hosts are ready yet")
 				clusterRequest.SetStatusCondition(
 					v1alpha1.ClusterRequestConditionTypeHostsReady,
@@ -312,6 +272,58 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 				)
 				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 			}
+
+			/*
+				randomString := rand.String(rand.Int())
+				hostName := fmt.Sprintf("%s-%s-%s", clusterRequest.Name, hostClass, randomString)
+				namespacedName := client.ObjectKey{
+					Name:      hostName,
+					Namespace: clusterRequest.Namespace,
+				}
+
+				// TODO: Replace with actual Host CR type when it's defined
+				// For now, this is a placeholder showing the intended structure
+				host := &v1alpha1.Host{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      hostName,
+						Namespace: clusterRequest.Namespace,
+						Labels: map[string]string{
+							"osac.openshift.io/cluster":    clusterRequest.Name,
+							"osac.openshift.io/host-class": hostClass,
+						},
+					},
+					Spec: v1alpha1.HostSpec{
+						NodeId:    hosts[i].NodeId,
+						MatchType: hostSet.MatchType,
+						HostClass: hosts[i].HostClass,
+						Online:    false,
+					},
+				}
+
+				// Set cluster request as owner of the host
+				if err := controllerutil.SetControllerReference(clusterRequest, host, r.Scheme); err != nil {
+					log.Error(err, "Failed to set controller reference for host", "hostName", hostName)
+					return ctrl.Result{}, err
+				}
+
+				existingHost := &v1alpha1.Host{}
+				err := r.Get(ctx, namespacedName, existingHost)
+				if err == nil {
+					// Host already exists, update if needed
+					log.Info("Host CR already exists", "hostName", hostName, "nodeId", hosts[i].NodeId)
+				} else if client.IgnoreNotFound(err) == nil {
+					// Host doesn't exist, create it
+					log.Info("Creating Host CR", "hostName", hostName, "nodeId", hosts[i].NodeId)
+					if err := r.Create(ctx, host); err != nil {
+						log.Error(err, "Failed to create Host CR", "hostName", hostName)
+						return ctrl.Result{}, err
+					}
+				} else {
+					// Unexpected error
+					log.Error(err, "Failed to get Host CR", "hostName", hostName)
+					return ctrl.Result{}, err
+				}
+			*/
 		}
 	}
 
@@ -333,7 +345,6 @@ func (r *ClusterRequestReconciler) handleUpdate(ctx context.Context, clusterRequ
 }
 
 // handleDeletion handles the cleanup when a ClusterRequest is being deleted
-// nolint
 func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	log.Info("Deleting ClusterRequest", "name", clusterRequest.Name)
@@ -351,13 +362,12 @@ func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRe
 		"ClusterRequest's hosts are being freed",
 	)
 
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	clusterId := string(clusterRequest.UID)
+	matchType := clusterRequest.Status.MatchType
 
 	// TODO: can use goroutines
 	for hostClass, hostSet := range clusterRequest.Status.HostSets {
-		hosts, err := r.getHosts(ctx, httpClient, hostClass, hostSet.Size, clusterRequest.Status.MatchType, string(clusterRequest.UID))
+		hosts, err := r.getHosts(ctx, hostClass, hostSet.Size, matchType, clusterId)
 		if err != nil {
 			log.Error(err, "Failed to get hosts from inventory during deletion")
 			clusterRequest.SetStatusCondition(
@@ -369,26 +379,9 @@ func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRe
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 		}
 
-		// TODO: can use goroutines
-		for i := range hosts {
-			err := r.setHostAttachment(ctx, httpClient, hosts[i].NodeId, "")
-			if err != nil {
-				log.Error(err, "Failed to free host", "node id", hosts[i].NodeId)
-				clusterRequest.SetStatusCondition(
-					v1alpha1.ClusterRequestConditionTypeHostsReady,
-					metav1.ConditionFalse,
-					v1alpha1.ClusterRequestReasonHostsUnavailable,
-					"Failed to free some hosts",
-				)
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-			}
-			clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
-				Size: clusterRequest.Status.HostSets[hostClass].Size - 1,
-			}
-			log.Info("Succeeded to free host", "node id", hosts[i].NodeId)
-		}
-		if clusterRequest.Status.HostSets[hostClass].Size == 0 {
-			delete(clusterRequest.Status.HostSets, hostClass)
+		err = r.setHostsAttachment(ctx, clusterRequest, hosts, "")
+		if err != nil {
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 		}
 	}
 
@@ -410,8 +403,8 @@ func (r *ClusterRequestReconciler) handleDeletion(ctx context.Context, clusterRe
 	return ctrl.Result{}, nil
 }
 
-func (r *ClusterRequestReconciler) getHosts(ctx context.Context, httpClient *http.Client, hostClass string, _ int, matchType string, clusterId string) ([]Host, error) {
-	log := logf.FromContext(ctx)
+func (r *ClusterRequestReconciler) getHosts(ctx context.Context, hostClass string, _ int, matchType string, clusterId string) ([]Host, error) {
+	log := logf.FromContext(ctx).V(1)
 
 	inventoryURL := *r.OsacInventoryUrl
 	inventoryURL.Path = "/v1/nodes/detail"
@@ -419,16 +412,18 @@ func (r *ClusterRequestReconciler) getHosts(ctx context.Context, httpClient *htt
 	// TODO: set query values for pluggable bare metal adapter
 	inventoryURL.RawQuery = query.Encode()
 
-	httpRequest, err := http.NewRequest(http.MethodGet, inventoryURL.String(), nil)
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, inventoryURL.String(), nil)
 	if err != nil {
+		log.Error(err, "Failed to create NewReqiestWithContext", "method", "getHosts")
 		return nil, err
 	}
 
 	httpRequest.Header.Set("X-Auth-Token", r.AuthToken)
 	httpRequest.Header.Set("X-OpenStack-Ironic-API-Version", "1.69")
 
-	response, err := httpClient.Do(httpRequest)
+	response, err := r.HttpClient.Do(httpRequest)
 	if err != nil {
+		log.Error(err, "Failed to perform request", "method", "getHosts")
 		return nil, err
 	}
 	defer func() {
@@ -441,6 +436,7 @@ func (r *ClusterRequestReconciler) getHosts(ctx context.Context, httpClient *htt
 	if response.StatusCode != http.StatusOK {
 		message, err := io.ReadAll(response.Body)
 		if err != nil {
+			log.Error(err, "Failed to read response body", "method", "getHosts")
 			return nil, err
 		}
 		err = errors.New(string(message))
@@ -450,6 +446,7 @@ func (r *ClusterRequestReconciler) getHosts(ctx context.Context, httpClient *htt
 	hostResponse := HostResponse{}
 	decoder := json.NewDecoder(response.Body)
 	if err := decoder.Decode(&hostResponse); err != nil {
+		log.Error(err, "Failed to decode response body", "method", "getHosts")
 		return nil, err
 	}
 
@@ -479,8 +476,47 @@ func (r *ClusterRequestReconciler) getHosts(ctx context.Context, httpClient *htt
 	return hosts, nil
 }
 
-func (r *ClusterRequestReconciler) setHostAttachment(ctx context.Context, httpClient *http.Client, nodeId string, clusterId string) error {
-	log := logf.FromContext(ctx)
+func (r *ClusterRequestReconciler) setHostsAttachment(ctx context.Context, clusterRequest *v1alpha1.ClusterRequest, hosts []Host, clusterId string) error {
+	log := logf.FromContext(ctx).V(1)
+
+	var op string
+	var delta int
+	if clusterId == "" {
+		op = "free"
+		delta = -1
+	} else {
+		op = "add"
+		delta = 1
+	}
+
+	// TODO: can use goroutines
+	for i := range hosts {
+		hostClass := hosts[i].HostClass
+		err := r.setHostAttachment(ctx, hosts[i].NodeId, clusterId)
+		if err != nil {
+			log.Error(err, "Failed to "+op+" host", "node id", hosts[i].NodeId)
+			clusterRequest.SetStatusCondition(
+				v1alpha1.ClusterRequestConditionTypeHostsReady,
+				metav1.ConditionFalse,
+				v1alpha1.ClusterRequestReasonHostsUnavailable,
+				"Failed to "+op+" some hosts",
+			)
+			return err
+		}
+		clusterRequest.Status.HostSets[hostClass] = v1alpha1.HostSet{
+			Size: clusterRequest.Status.HostSets[hostClass].Size + delta,
+		}
+		if clusterRequest.Status.HostSets[hostClass].Size == 0 {
+			delete(clusterRequest.Status.HostSets, hostClass)
+		}
+		log.Info("Succeeded to "+op+" host", "node id", hosts[i].NodeId)
+	}
+
+	return nil
+}
+
+func (r *ClusterRequestReconciler) setHostAttachment(ctx context.Context, nodeId string, clusterId string) error {
+	log := logf.FromContext(ctx).V(1)
 
 	managementURL := *r.OsacManagementUrl
 	managementURL.Path = "/v1/nodes/" + nodeId
@@ -495,31 +531,40 @@ func (r *ClusterRequestReconciler) setHostAttachment(ctx context.Context, httpCl
 
 	bodyBytes, err := json.Marshal(patchBody)
 	if err != nil {
-		return fmt.Errorf("failed to marshal patch body: %w", err)
+		log.Error(err, "Failed to marshal request body", "method", "setHostAttachment")
+		return err
 	}
 
-	httpRequest, err := http.NewRequest(http.MethodPatch, managementURL.String(), bytes.NewReader(bodyBytes))
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPatch, managementURL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("failed to create PATCH request: %w", err)
+		log.Error(err, "Failed to create NewReqiestWithContext", "method", "setHostAttachment")
+		return err
 	}
 
 	httpRequest.Header.Set("X-Auth-Token", r.AuthToken)
 	httpRequest.Header.Set("X-OpenStack-Ironic-API-Version", "1.69")
 	httpRequest.Header.Set("Content-Type", "application/json-patch+json")
 
-	response, err := httpClient.Do(httpRequest)
+	response, err := r.HttpClient.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("failed to execute PATCH request: %w", err)
+		log.Error(err, "Failed to perform request", "method", "setHostAttachment")
+		return err
 	}
 	defer func() {
 		err := response.Body.Close()
 		if err != nil {
-			log.Error(err, "Failed to close connection", "method", "patchHost")
+			log.Error(err, "Failed to close connection", "method", "setHostAttachment")
 		}
 	}()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("PATCH request failed with status %d", response.StatusCode)
+		message, err := io.ReadAll(response.Body)
+		if err != nil {
+			log.Error(err, "Failed to read response body", "method", "setHostAttachment")
+			return err
+		}
+		err = errors.New(string(message))
+		return err
 	}
 
 	log.Info("Successfully patched host", "host", nodeId)

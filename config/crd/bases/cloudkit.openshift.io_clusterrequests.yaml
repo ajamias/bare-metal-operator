@@ -60,17 +60,22 @@ spec:
                   description: HostSet defines a set of hosts with the same class
                     and required count
                   properties:
+                    hostClass:
+                      type: string
                     size:
                       description: Size specifies the number of hosts required for
                         this host class
                       minimum: 1
                       type: integer
                   required:
+                  - hostClass
                   - size
                   type: object
                 description: HostSets defines the number of hosts needed for each
                   host set type.
                 type: object
+                x-kubernetes-validations:
+                - rule: self.all(k, v, k == v.hostClass)
               matchType:
                 default: Bare
                 description: MatchType specifies the criteria for selecting hosts
@@ -79,9 +84,49 @@ spec:
                 - Agent
                 - Virtual
                 type: string
+              networks:
+                description: Networks defines the vlans that connect hosts together
+                items:
+                  description: Network defines a set of hosts to be put on the same
+                    vlan
+                  properties:
+                    hostSets:
+                      additionalProperties:
+                        description: HostSet defines a set of hosts with the same
+                          class and required count
+                        properties:
+                          hostClass:
+                            type: string
+                          size:
+                            description: Size specifies the number of hosts required
+                              for this host class
+                            minimum: 1
+                            type: integer
+                        required:
+                        - hostClass
+                        - size
+                        type: object
+                      description: HostSets specifies the hosts that should be connected
+                        to this network
+                      type: object
+                    name:
+                      description: Name is the name of the network
+                      type: string
+                    vlan:
+                      description: VLAN is the ID of the network
+                      maximum: 4094
+                      minimum: 1
+                      type: integer
+                  required:
+                  - hostSets
+                  - name
+                  - vlan
+                  type: object
+                type: array
             required:
             - hostSets
             - matchType
+            - networks
             type: object
           status:
             description: ClusterRequestStatus defines the observed state of ClusterRequest.
@@ -149,12 +194,15 @@ spec:
                   description: HostSet defines a set of hosts with the same class
                     and required count
                   properties:
+                    hostClass:
+                      type: string
                     size:
                       description: Size specifies the number of hosts required for
                         this host class
                       minimum: 1
                       type: integer
                   required:
+                  - hostClass
                   - size
                   type: object
                 description: HostSets shows the current allocation of hosts
