@@ -89,10 +89,8 @@ func (in *BareMetalClusterSpec) DeepCopyInto(out *BareMetalClusterSpec) {
 	*out = *in
 	if in.HostSets != nil {
 		in, out := &in.HostSets, &out.HostSets
-		*out = make(map[string]HostSet, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
+		*out = make([]HostSet, len(*in))
+		copy(*out, *in)
 	}
 }
 
@@ -111,10 +109,8 @@ func (in *BareMetalClusterStatus) DeepCopyInto(out *BareMetalClusterStatus) {
 	*out = *in
 	if in.HostSets != nil {
 		in, out := &in.HostSets, &out.HostSets
-		*out = make(map[string]HostSet, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
+		*out = make([]HostSet, len(*in))
+		copy(*out, *in)
 	}
 	if in.LastUpdated != nil {
 		in, out := &in.LastUpdated, &out.LastUpdated

@@ -56,7 +56,9 @@ spec:
             description: BareMetalClusterSpec defines the desired state of BareMetalCluster.
             properties:
               hostSets:
-                additionalProperties:
+                description: HostSets defines the number of hosts needed for each
+                  host set type.
+                items:
                   description: HostSet defines a set of hosts with the same class
                     and required count
                   properties:
@@ -72,19 +74,20 @@ spec:
                   - hostClass
                   - size
                   type: object
-                description: HostSets defines the number of hosts needed for each
-                  host set type.
-                type: object
-                x-kubernetes-validations:
-                - rule: self.all(key, self[key].hostClass == key)
+                type: array
+                x-kubernetes-list-map-keys:
+                - hostClass
+                x-kubernetes-list-type: map
               matchType:
-                default: Bare
+                default: baremetal
                 description: MatchType specifies the criteria for selecting hosts
                 enum:
-                - Bare
-                - Agent
-                - Virtual
+                - baremetal
+                - agent
                 type: string
+                x-kubernetes-validations:
+                - message: field is immutable
+                  rule: self == oldSelf
             required:
             - hostSets
             - matchType
@@ -151,7 +154,8 @@ spec:
                   type: object
                 type: array
               hostSets:
-                additionalProperties:
+                description: HostSets shows the current allocation of hosts
+                items:
                   description: HostSet defines a set of hosts with the same class
                     and required count
                   properties:
@@ -167,21 +171,22 @@ spec:
                   - hostClass
                   - size
                   type: object
-                description: HostSets shows the current allocation of hosts
-                type: object
+                type: array
               lastUpdated:
                 description: LastUpdated is the timestamp when the status was last
                   updated
                 format: date-time
                 type: string
               matchType:
-                default: Bare
+                default: baremetal
                 description: MatchType specifies the criteria for selecting hosts
                 enum:
-                - Bare
-                - Agent
-                - Virtual
+                - baremetal
+                - agent
                 type: string
+                x-kubernetes-validations:
+                - message: field is immutable
+                  rule: self == oldSelf
             required:
             - hostSets
             - matchType

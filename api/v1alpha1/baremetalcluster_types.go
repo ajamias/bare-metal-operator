@@ -24,27 +24,30 @@ import (
 type BareMetalClusterSpec struct {
 	// MatchType specifies the criteria for selecting hosts
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=Bare;Agent;Virtual
-	// +kubebuilder:default=Bare
+	// +kubebuilder:validation:Enum=baremetal;agent
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="field is immutable"
+	// +kubebuilder:default=baremetal
 	MatchType string `json:"matchType"`
 
 	// HostSets defines the number of hosts needed for each host set type.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:XValidation:rule="self.all(key, self[key].hostClass == key)"
-	HostSets map[string]HostSet `json:"hostSets"`
+	// +listType=map
+	// +listMapKey=hostClass
+	HostSets []HostSet `json:"hostSets"`
 }
 
 // BareMetalClusterStatus defines the observed state of BareMetalCluster.
 type BareMetalClusterStatus struct {
 	// MatchType specifies the criteria for selecting hosts
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=Bare;Agent;Virtual
-	// +kubebuilder:default=Bare
+	// +kubebuilder:validation:Enum=baremetal;agent
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="field is immutable"
+	// +kubebuilder:default=baremetal
 	MatchType string `json:"matchType"`
 
 	// HostSets shows the current allocation of hosts
 	// +kubebuilder:validation:Required
-	HostSets map[string]HostSet `json:"hostSets"`
+	HostSets []HostSet `json:"hostSets"`
 
 	// LastUpdated is the timestamp when the status was last updated
 	// +kubebuilder:validation:Optional
