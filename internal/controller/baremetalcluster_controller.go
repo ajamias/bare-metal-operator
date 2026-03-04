@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -79,6 +80,8 @@ type HostAttachmentAction struct {
 	ClusterId string
 	Action    HostAction
 }
+
+type contextKey string
 
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=baremetalclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=baremetalclusters/status,verbs=get;update;patch
@@ -222,54 +225,69 @@ func (r *BareMetalClusterReconciler) handleUpdate(ctx context.Context, bareMetal
 		return ctrl.Result{}, err
 	}
 
-	// attach or detach hosts to match spec
-	// TODO: can use goroutines
-	for hostClass, delta := range hostClassToHostSetDelta {
-		if delta > 0 {
-			hosts := hostClassToAvailableHosts[hostClass]
-			err = r.setHostsAttachment(
-				ctx,
-				bareMetalCluster,
-				hosts,
-				string(bareMetalCluster.UID),
-				hostClassToCurrentHostSetSize,
-			)
-			if err != nil {
-				break
-			}
-			log.Info(fmt.Sprintf("Attached %d %s hosts to cluster %s", delta, hostClass, string(bareMetalCluster.UID)))
-		} else if delta < 0 {
-			hosts, err := r.getHosts(
-				ctx,
-				hostClass,
-				-delta,
-				bareMetalCluster.Spec.MatchType,
-				string(bareMetalCluster.UID),
-			)
-			if err != nil {
-				log.Error(err, "Failed to get hosts from inventory")
-				bareMetalCluster.SetStatusCondition(
-					v1alpha1.BareMetalClusterConditionTypeHostsReady,
-					metav1.ConditionFalse,
-					v1alpha1.BareMetalClusterReasonInventoryServiceFailed,
-					"Failed to get hosts from inventory",
-				)
-				break
-			}
+	// attach or detach hosts in parallel for each host class
+	var wg sync.WaitGroup
+	resultErrors := make(chan error, len(hostClassToHostSetDelta))
+	ctx = context.WithValue(ctx, contextKey("mutex"), &sync.Mutex{})
 
-			err = r.setHostsAttachment(
-				ctx,
-				bareMetalCluster,
-				hosts,
-				"",
-				hostClassToCurrentHostSetSize,
-			)
-			if err != nil {
-				break
-			}
-			log.Info(fmt.Sprintf("Detached %d %s hosts from cluster %s", -delta, hostClass, string(bareMetalCluster.UID)))
+	for hostClass, delta := range hostClassToHostSetDelta {
+		if delta == 0 {
+			continue
 		}
+
+		wg.Add(1)
+		go func(hostClass string, delta int) {
+			defer wg.Done()
+			if delta > 0 {
+				hosts := hostClassToAvailableHosts[hostClass]
+				err = r.setHostsAttachment(
+					ctx,
+					bareMetalCluster,
+					hosts,
+					string(bareMetalCluster.UID),
+					hostClassToCurrentHostSetSize,
+				)
+				if err != nil {
+					resultErrors <- err
+					return
+				}
+				log.Info(fmt.Sprintf("Attached %d %s hosts to cluster %s", delta, hostClass, string(bareMetalCluster.UID)))
+			} else if delta < 0 {
+				hosts, err := r.getHosts(
+					ctx,
+					hostClass,
+					-delta,
+					bareMetalCluster.Spec.MatchType,
+					string(bareMetalCluster.UID),
+				)
+				if err != nil {
+					log.Error(err, "Failed to get hosts from inventory")
+					bareMetalCluster.SetStatusCondition(
+						v1alpha1.BareMetalClusterConditionTypeHostsReady,
+						metav1.ConditionFalse,
+						v1alpha1.BareMetalClusterReasonInventoryServiceFailed,
+						"Failed to get hosts from inventory",
+					)
+					resultErrors <- err
+					return
+				}
+
+				err = r.setHostsAttachment(
+					ctx,
+					bareMetalCluster,
+					hosts,
+					"",
+					hostClassToCurrentHostSetSize,
+				)
+				if err != nil {
+					resultErrors <- err
+					return
+				}
+				log.Info(fmt.Sprintf("Detached %d %s hosts from cluster %s", -delta, hostClass, string(bareMetalCluster.UID)))
+			}
+		}(hostClass, delta)
 	}
+	wg.Wait()
 
 	// need to update HostSets even on failure
 	updatedHostSets := make([]v1alpha1.HostSet, 0, len(hostClassToCurrentHostSetSize))
@@ -281,6 +299,10 @@ func (r *BareMetalClusterReconciler) handleUpdate(ctx context.Context, bareMetal
 	}
 	bareMetalCluster.Status.HostSets = updatedHostSets
 
+	close(resultErrors)
+	for err = range resultErrors {
+		log.Error(err, "Failed to attach/detach host")
+	}
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -314,38 +336,48 @@ func (r *BareMetalClusterReconciler) handleDeletion(ctx context.Context, bareMet
 		hostClassToCurrentHostSetSize[hostSet.HostClass] = hostSet.Size
 	}
 
-	// TODO: can use goroutines
-	var err error
-	for _, hostSet := range bareMetalCluster.Status.HostSets {
-		hosts, err := r.getHosts(
-			ctx,
-			hostSet.HostClass,
-			hostSet.Size,
-			bareMetalCluster.Status.MatchType,
-			string(bareMetalCluster.UID),
-		)
-		if err != nil {
-			log.Error(err, "Failed to get hosts from inventory during deletion")
-			bareMetalCluster.SetStatusCondition(
-				v1alpha1.BareMetalClusterConditionTypeHostsReady,
-				metav1.ConditionFalse,
-				v1alpha1.BareMetalClusterReasonInventoryServiceFailed,
-				"Failed to get hosts from inventory during deletion",
-			)
-			break
-		}
+	// detach hosts in parallel for each host class
+	var wg sync.WaitGroup
+	resultErrors := make(chan error, len(bareMetalCluster.Status.HostSets))
+	ctx = context.WithValue(ctx, contextKey("mutex"), &sync.Mutex{})
 
-		err = r.setHostsAttachment(
-			ctx,
-			bareMetalCluster,
-			hosts,
-			"",
-			hostClassToCurrentHostSetSize,
-		)
-		if err != nil {
-			break
-		}
+	for _, hostSet := range bareMetalCluster.Status.HostSets {
+		wg.Add(1)
+		go func(hostSet v1alpha1.HostSet) {
+			defer wg.Done()
+			hosts, err := r.getHosts(
+				ctx,
+				hostSet.HostClass,
+				hostSet.Size,
+				bareMetalCluster.Status.MatchType,
+				string(bareMetalCluster.UID),
+			)
+			if err != nil {
+				log.Error(err, "Failed to get hosts from inventory during deletion")
+				bareMetalCluster.SetStatusCondition(
+					v1alpha1.BareMetalClusterConditionTypeHostsReady,
+					metav1.ConditionFalse,
+					v1alpha1.BareMetalClusterReasonInventoryServiceFailed,
+					"Failed to get hosts from inventory during deletion",
+				)
+				resultErrors <- err
+				return
+			}
+
+			err = r.setHostsAttachment(
+				ctx,
+				bareMetalCluster,
+				hosts,
+				"",
+				hostClassToCurrentHostSetSize,
+			)
+			if err != nil {
+				resultErrors <- err
+				return
+			}
+		}(hostSet)
 	}
+	wg.Wait()
 
 	// need to update HostSets even on failure
 	updatedHostSets := make([]v1alpha1.HostSet, 0, len(hostClassToCurrentHostSetSize))
@@ -357,6 +389,11 @@ func (r *BareMetalClusterReconciler) handleDeletion(ctx context.Context, bareMet
 	}
 	bareMetalCluster.Status.HostSets = updatedHostSets
 
+	close(resultErrors)
+	var err error
+	for err = range resultErrors {
+		log.Error(err, "Failed to detach host during deletion")
+	}
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -401,7 +438,11 @@ func (r *BareMetalClusterReconciler) verifyNetworkHostSets(bareMetalCluster *v1a
 }
 */
 
-func (r *BareMetalClusterReconciler) verifyAvailableHosts(ctx context.Context, bareMetalCluster *v1alpha1.BareMetalCluster, hostClassToHostSetDelta map[string]int) (map[string][]Host, error) {
+func (r *BareMetalClusterReconciler) verifyAvailableHosts(
+	ctx context.Context,
+	bareMetalCluster *v1alpha1.BareMetalCluster,
+	hostClassToHostSetDelta map[string]int,
+) (map[string][]Host, error) {
 	log := logf.FromContext(ctx).V(1)
 	ctx = logf.IntoContext(ctx, log)
 
@@ -455,7 +496,13 @@ func (r *BareMetalClusterReconciler) verifyAvailableHosts(ctx context.Context, b
 	return hostClassToAvailableHosts, nil
 }
 
-func (r *BareMetalClusterReconciler) getHosts(ctx context.Context, hostClass string, count int, matchType string, clusterId string) ([]Host, error) {
+func (r *BareMetalClusterReconciler) getHosts(
+	ctx context.Context,
+	hostClass string,
+	count int,
+	matchType string,
+	clusterId string,
+) ([]Host, error) {
 	log := logf.FromContext(ctx).V(1)
 	ctx = logf.IntoContext(ctx, log)
 
@@ -596,7 +643,10 @@ func (r *BareMetalClusterReconciler) markAndAttachHost(
 		)
 		return err
 	}
+	mutex := ctx.Value(contextKey("mutex")).(*sync.Mutex)
+	mutex.Lock()
 	hostClassToCurrentHostSetSize[hostClass] += 1
+	mutex.Unlock()
 
 	// create Host CR
 	existingHosts := &v1alpha1.TestHostList{}
@@ -715,10 +765,13 @@ func (r *BareMetalClusterReconciler) unmarkAndDetachHost(
 		)
 		return err
 	}
+	mutex := ctx.Value(contextKey("mutex")).(*sync.Mutex)
+	mutex.Lock()
 	hostClassToCurrentHostSetSize[hostClass] -= 1
 	if hostClassToCurrentHostSetSize[hostClass] == 0 {
 		delete(hostClassToCurrentHostSetSize, hostClass)
 	}
+	mutex.Unlock()
 
 	log.Info("Successfully detached host", "NodeId", host.NodeId)
 
