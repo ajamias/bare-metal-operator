@@ -44,6 +44,7 @@ import (
 	// +kubebuilder:scaffold:imports
 	"github.com/ajamias/bare-metal-operator/internal/controller"
 	"github.com/ajamias/bare-metal-operator/internal/inventory"
+	"github.com/ajamias/bare-metal-operator/internal/workflow"
 )
 
 var (
@@ -206,25 +207,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	// config inventory url
 	osacInventoryEndpoint, ok := os.LookupEnv("OSAC_INVENTORY_URL")
 	if !ok {
 		setupLog.Error(errors.New("unable to set env variables"), "OSAC_INVENTORY_URL not found")
 		os.Exit(1)
 	}
-	osacManagementEndpoint, ok := os.LookupEnv("OSAC_MANAGEMENT_URL")
-	if !ok {
-		setupLog.Error(errors.New("unable to set env variables"), "OSAC_MANAGEMENT_URL not found")
-		os.Exit(1)
-	}
-	authToken, ok := os.LookupEnv("OSAC_AUTH_TOKEN")
-	if !ok {
-		setupLog.Error(errors.New("unable to set env variables"), "OSAC_AUTH_TOKEN not found")
-		os.Exit(1)
-	}
-
 	osacInventoryUrl, err := url.Parse(osacInventoryEndpoint)
 	if err != nil {
 		setupLog.Error(err, "OSAC_INVENTORY_URL is not a valid URL")
+		os.Exit(1)
+	}
+	if osacInventoryUrl.Scheme != "http" && osacInventoryUrl.Scheme != "https" {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_INVENTORY_URL only supports http or https")
+		os.Exit(1)
+	}
+
+	// config management url
+	osacManagementEndpoint, ok := os.LookupEnv("OSAC_MANAGEMENT_URL")
+	if !ok {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_MANAGEMENT_URL not found")
 		os.Exit(1)
 	}
 	osacManagementUrl, err := url.Parse(osacManagementEndpoint)
@@ -232,12 +234,26 @@ func main() {
 		setupLog.Error(err, "OSAC_MANAGEMENT_URL is not a valid URL")
 		os.Exit(1)
 	}
-	if osacInventoryUrl.Scheme != "http" && osacInventoryUrl.Scheme != "https" {
-		setupLog.Error(errors.New("unable to set env variables"), "OSAC_INVENTORY_URL only supports http or https")
-		os.Exit(1)
-	}
 	if osacManagementUrl.Scheme != "http" && osacManagementUrl.Scheme != "https" {
 		setupLog.Error(errors.New("unable to set env variables"), "OSAC_MANAGEMENT_URL only supports http or https")
+		os.Exit(1)
+	}
+
+	// config auth token
+	authToken, ok := os.LookupEnv("OSAC_AUTH_TOKEN")
+	if !ok {
+		setupLog.Error(errors.New("unable to set env variables"), "OSAC_AUTH_TOKEN not found")
+		os.Exit(1)
+	}
+
+	// config workflows
+	workflowsPath, ok := os.LookupEnv("OSAC_WORKFLOWS_PATH")
+	if !ok {
+		workflowsPath = "config/workflows.yaml"
+	}
+	err = workflow.LoadWorkflowsFromYAML(workflowsPath)
+	if err != nil {
+		setupLog.Error(err, "Unable to import workflows")
 		os.Exit(1)
 	}
 

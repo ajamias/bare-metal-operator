@@ -1,0 +1,126 @@
+- name: agentProvisioning
+  matchHosts:
+    managedBy: none
+  setHostProperties:
+    managedBy: agent
+  expectedInput:
+    imageURL: string
+  setUpHost:
+    - name: preProvision
+      parallel: true
+      tasks:
+        - validateHardware
+        - configureBIOS
+    - name: provision
+      parallel: false
+      tasks:
+        - provisionHostWithImage
+        - powerOn
+    - name: postProvision
+      parallel: false
+      tasks:
+        - waitForBoot
+        - runHealthCheck
+        - networkAttach
+  setUpCluster: []
+  tearDownHost:
+    - name: cleanup
+      parallel: false
+      tasks:
+        - powerOff
+        - cleanupStorage
+  tearDownCluster: []
+
+- name: pxeProvisioning
+  matchHosts:
+    managedBy: none
+    bootMode: pxe
+  setHostProperties:
+    managedBy: pxe
+  expectedInput:
+    pxeServer: string
+    bootImage: string
+    kernelArgs: string
+  setUpHost:
+    - name: preProvision
+      parallel: true
+      tasks:
+        - validateHardware
+        - configureBIOS
+    - name: configurePXE
+      parallel: false
+      tasks:
+        - configurePXEBoot
+        - configureNetwork
+    - name: provision
+      parallel: false
+      tasks:
+        - powerOn
+        - waitForPXEBoot
+        - installOS
+    - name: postProvision
+      parallel: false
+      tasks:
+        - installBootloader
+        - runHealthCheck
+  setUpCluster: []
+  tearDownHost:
+    - name: cleanup
+      parallel: false
+      tasks:
+        - powerOff
+        - resetPXEConfig
+        - cleanupStorage
+  tearDownCluster: []
+
+- name: imageBasedProvisioning
+  matchHosts:
+    managedBy: none
+  setHostProperties:
+    managedBy: image
+  expectedInput:
+    imageURL: string
+    storageDevice: string
+    networkConfig: string
+  setUpHost:
+    - name: preProvision
+      parallel: true
+      tasks:
+        - validateHardware
+        - configureBIOS
+    - name: configureStorage
+      parallel: false
+      tasks:
+        - configureRAID
+        - partitionStorage
+    - name: provision
+      parallel: false
+      tasks:
+        - writeImageToStorage
+        - installBootloader
+        - configureNetwork
+    - name: boot
+      parallel: false
+      tasks:
+        - powerOn
+        - waitForBoot
+        - runHealthCheck
+  setUpCluster:
+    - name: clusterSetup
+      parallel: false
+      tasks:
+        - configureClusterNetworking
+        - deployControlPlane
+  tearDownHost:
+    - name: cleanup
+      parallel: false
+      tasks:
+        - powerOff
+        - cleanupStorage
+        - resetBMC
+  tearDownCluster:
+    - name: clusterTeardown
+      parallel: false
+      tasks:
+        - drainNodes
+        - removeFromCluster

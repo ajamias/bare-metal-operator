@@ -33,8 +33,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1alpha1 "github.com/ajamias/bare-metal-operator/api/v1alpha1"
+	"github.com/ajamias/bare-metal-operator/api/v1alpha1"
 	"github.com/ajamias/bare-metal-operator/internal/inventory"
+	"github.com/ajamias/bare-metal-operator/internal/workflow"
 )
 
 // BareMetalClusterReconciler reconciles a BareMetalCluster object
@@ -144,6 +145,17 @@ func (r *BareMetalClusterReconciler) handleUpdate(ctx context.Context, bareMetal
 
 	if bareMetalCluster.Status.HostSets == nil {
 		bareMetalCluster.Status.HostSets = []v1alpha1.HostSet{}
+	}
+
+	err := workflow.Validate(bareMetalCluster.Spec.Workflow)
+	if err != nil {
+		log.Error(err, "Failed to verify workflows")
+		bareMetalCluster.SetStatusCondition(
+			v1alpha1.BareMetalClusterConditionTypeHostsReady,
+			metav1.ConditionFalse,
+			v1alpha1.BareMetalClusterReasonInventoryServiceFailed,
+			"Failed to verify workflows",
+		)
 	}
 
 	// positive delta means add hosts of the HostClass, negative means remove
@@ -262,6 +274,12 @@ func (r *BareMetalClusterReconciler) handleUpdate(ctx context.Context, bareMetal
 		log.Error(err, "Failed to attach/detach host")
 	}
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	err = workflow.RunOnEvent(ctx, bareMetalCluster.Spec.Workflow, workflow.EventHostCreate)
+	if err != nil {
+		log.Error(err, "Failed to set up host")
 		return ctrl.Result{}, err
 	}
 

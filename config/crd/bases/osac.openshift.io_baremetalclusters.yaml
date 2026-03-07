@@ -88,9 +88,27 @@ spec:
                 x-kubernetes-validations:
                 - message: field is immutable
                   rule: self == oldSelf
+              workflow:
+                description: Workflow specifies the workflow to use for additional
+                  Host and Cluster configuration
+                properties:
+                  input:
+                    additionalProperties:
+                      x-kubernetes-preserve-unknown-fields: true
+                    description: Input is a key value map of inputs for the specified
+                      workflow
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  name:
+                    description: Name is the name of the workflow
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - hostSets
             - matchType
+            - workflow
             type: object
           status:
             description: BareMetalClusterStatus defines the observed state of BareMetalCluster.
