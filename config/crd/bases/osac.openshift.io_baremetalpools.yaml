@@ -154,6 +154,20 @@ spec:
                   updated
                 format: date-time
                 type: string
+              setupWorkflow:
+                description: SetupWorkflow shows the status and output of the workflow
+                  to set up the pool
+                properties:
+                  output:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  status:
+                    type: string
+                required:
+                - output
+                - status
+                type: object
             required:
             - hostSets
             type: object

@@ -39,6 +39,10 @@ type BareMetalPoolStatus struct {
 	// +kubebuilder:validation:Required
 	HostSets map[string]int `json:"hostSets"`
 
+	// SetupWorkflow shows the status and output of the workflow to set up the pool
+	// +kubebuilder:validation:Optional
+	SetupWorkflow WorkflowStatus `json:"setupWorkflow,omitempty"`
+
 	// LastUpdated is the timestamp when the status was last updated
 	// +kubebuilder:validation:Optional
 	LastUpdated *metav1.Time `json:"lastUpdated,omitempty"`
@@ -56,6 +60,11 @@ type ProfileSpec struct {
 	// Input is a key value map of inputs for the specified workflow
 	// +kubebuilder:validation:Optional
 	Input map[string]string `json:"input,omitempty"`
+}
+
+type WorkflowStatus struct {
+	Status string            `json:"status"`
+	Output map[string]string `json:"output"`
 }
 
 // +kubebuilder:object:root=true
