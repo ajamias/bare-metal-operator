@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	osacv1alpha1 "github.com/osac-project/bare-metal-operator/api/v1alpha1"
+	"github.com/osac-project/bare-metal-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -201,6 +202,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.BareMetalPoolReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BareMetalPool")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
