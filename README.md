@@ -16,9 +16,58 @@ resources and reconciles them to their desired state:
 ## Configuration
 
 Configuration is supplied via environment variables (e.g. from a Secret mounted
-into the manager deployment). The following are supported:
+into the manager deployment) and volume mounts. The following are supported:
 
-### (TBD)
+### Inventory
+
+The operator reads inventory configuration to gather information from backend
+inventory systems.
+
+**Configuration file:** `/etc/osac/inventory/inventory.yaml`
+
+**Example:**
+
+```yaml
+name: my-inventory
+type: openstack
+options:
+  openstack:
+    cloud: ajamias
+hostClass: openstack
+networkClass: openstack
+```
+
+**Fields:**
+- `name` — identifier for this inventory backend
+- `type` — inventory backend type (e.g., `openstack`)
+- `options` — backend-specific configuration options
+- `hostClass` — host management class to use
+- `networkClass` — network class to use
+
+### Host Lock
+
+The operator uses distributed locking to coordinate host assignments across
+multiple controller instances and prevent race conditions when claiming hosts.
+
+**Configuration file:** `/etc/osac/lock/lock.yaml`
+
+**Example:**
+
+```yaml
+type: redis
+ttl: 30s
+options:
+  addr: osac-redis-inventory:6379
+  db: 0
+```
+
+**Fields:**
+- `type` — lock backend type (currently only `redis` is supported)
+- `ttl` — lock expiration time (duration format, e.g., `30s`, `1m`)
+- `options` — backend-specific configuration options
+  - For Redis:
+    - `addr` — Redis server address (default: `localhost:6379`)
+    - `db` — Redis database number (default: `0`)
 
 ## Getting Started
 

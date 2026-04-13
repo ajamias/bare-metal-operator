@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -36,9 +37,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/yaml"
 
 	osacv1alpha1 "github.com/osac-project/bare-metal-operator/api/v1alpha1"
 	"github.com/osac-project/bare-metal-operator/internal/controller"
+	"github.com/osac-project/bare-metal-operator/internal/inventory"
+	"github.com/osac-project/bare-metal-operator/internal/lock"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -202,11 +206,60 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := context.Background()
+
+	// Read and parse inventory configuration
+	inventoryConfigData, err := os.ReadFile("/etc/osac/inventory/inventory.yaml")
+	if err != nil {
+		setupLog.Error(err, "unable to read inventory config file")
+		os.Exit(1)
+	}
+
+	var inventoryConfig inventory.Config
+	if err := yaml.Unmarshal(inventoryConfigData, &inventoryConfig); err != nil {
+		setupLog.Error(err, "unable to parse inventory config")
+		os.Exit(1)
+	}
+
+	inventoryClient, err := inventory.NewClient(ctx, &inventoryConfig)
+	if err != nil {
+		setupLog.Error(err, "unable to create inventory client")
+		os.Exit(1)
+	}
+
+	// Read and parse locker configuration
+	lockerConfigData, err := os.ReadFile("/etc/osac/lock/lock.yaml")
+	if err != nil {
+		setupLog.Error(err, "unable to read locker config file")
+		os.Exit(1)
+	}
+
+	var lockerConfig lock.Config
+	if err := yaml.Unmarshal(lockerConfigData, &lockerConfig); err != nil {
+		setupLog.Error(err, "unable to parse locker config")
+		os.Exit(1)
+	}
+
+	locker, err := lock.NewLocker(ctx, &lockerConfig)
+	if err != nil {
+		setupLog.Error(err, "unable to create locker")
+		os.Exit(1)
+	}
+
 	if err := (&controller.BareMetalPoolReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "BareMetalPool")
+		os.Exit(1)
+	}
+	if err := (&controller.HostLeaseReconciler{
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		InventoryClient: inventoryClient,
+		Locker:          locker,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HostLease")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
