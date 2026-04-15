@@ -127,6 +127,12 @@ func (r *BareMetalPoolReconciler) handleUpdate(ctx context.Context, bareMetalPoo
 		return ctrl.Result{}, nil
 	}
 
+	networkName := bareMetalPool.Name + "-network"
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- r.createPrivateNetwork(ctx, networkName)
+	}()
+
 	if bareMetalPool.Status.HostSets == nil {
 		bareMetalPool.Status.HostSets = []v1alpha1.BareMetalHostSet{}
 	}
@@ -172,7 +178,7 @@ func (r *BareMetalPoolReconciler) handleUpdate(ctx context.Context, bareMetalPoo
 		delta := replicas - int32(len(currentHostLeases[hostType]))
 		if delta > 0 {
 			for range delta {
-				if err := r.createHostLeaseCR(ctx, bareMetalPool, hostType); err != nil {
+				if err := r.createHostLeaseCR(ctx, bareMetalPool, hostType, networkName); err != nil {
 					log.Error(err, "Failed to create HostLease CR")
 					bareMetalPool.SetStatusCondition(
 						v1alpha1.BareMetalPoolConditionTypeReady,
@@ -226,7 +232,16 @@ func (r *BareMetalPoolReconciler) handleUpdate(ctx context.Context, bareMetalPoo
 		delete(currentHostLeases, hostType)
 	}
 
-	// TODO: add profile (setup) logic
+	if err := <-errCh; err != nil {
+		log.Error(err, "Failed to create network", "networkName", networkName)
+		bareMetalPool.SetStatusCondition(
+			v1alpha1.BareMetalPoolConditionTypeReady,
+			metav1.ConditionFalse,
+			"Failed to create network",
+			v1alpha1.BareMetalPoolReasonFailed,
+		)
+		return ctrl.Result{}, err
+	}
 
 	bareMetalPool.SetStatusCondition(
 		v1alpha1.BareMetalPoolConditionTypeReady,
@@ -253,6 +268,12 @@ func (r *BareMetalPoolReconciler) handleDeletion(ctx context.Context, bareMetalP
 
 	// TODO: add profile (teardown) logic
 
+	networkName := bareMetalPool.Name + "-network"
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- r.deletePrivateNetwork(ctx, networkName)
+	}()
+
 	hostLeaseList := &v1alpha1.HostLeaseList{}
 	err := r.List(ctx, hostLeaseList,
 		client.InNamespace(bareMetalPool.Namespace),
@@ -263,13 +284,23 @@ func (r *BareMetalPoolReconciler) handleDeletion(ctx context.Context, bareMetalP
 		return err
 	}
 
+	// Move all HostLeases to idle-agents-network
 	for i := range hostLeaseList.Items {
 		hostLease := &hostLeaseList.Items[i]
-		if err := r.Delete(ctx, hostLease); client.IgnoreNotFound(err) != nil {
-			log.Error(err, "Failed to delete HostLease CR", "hostLease", hostLease.Name)
-			return err
+		if len(hostLease.Spec.NetworkInterfaces) > 0 &&
+			hostLease.Spec.NetworkInterfaces[0].Network != "idle-agents-network" {
+			hostLease.Spec.NetworkInterfaces[0].Network = "idle-agents-network"
+			if err := r.Update(ctx, hostLease); err != nil {
+				log.Error(err, "Failed to update HostLease network to idle-agents-network", "hostLease", hostLease.Name)
+				return err
+			}
+			log.Info("Updated HostLease network to idle-agents-network", "hostLease", hostLease.Name)
 		}
-		log.Info("Deleted HostLease CR", "hostLease", hostLease.Name)
+	}
+
+	if err := <-errCh; err != nil {
+		log.Error(err, "Failed to delete network", "networkName", networkName)
+		return err
 	}
 
 	if controllerutil.RemoveFinalizer(bareMetalPool, BareMetalPoolFinalizer) {
@@ -288,6 +319,7 @@ func (r *BareMetalPoolReconciler) createHostLeaseCR(
 	ctx context.Context,
 	bareMetalPool *v1alpha1.BareMetalPool,
 	hostType string,
+	networkName string,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -327,6 +359,11 @@ func (r *BareMetalPoolReconciler) createHostLeaseCR(
 			TemplateID:         templateID,
 			TemplateParameters: templateParameters,
 			PoweredOn:          false,
+			NetworkInterfaces: []v1alpha1.NetworkInterfaceSpec{
+				{
+					Network: networkName,
+				},
+			},
 		},
 	}
 	if err := controllerutil.SetControllerReference(bareMetalPool, hostLeaseCR, r.Scheme); err != nil {
@@ -354,4 +391,68 @@ func (r *BareMetalPoolReconciler) updateStatusHostSets(bareMetalPool *v1alpha1.B
 		}
 	}
 	bareMetalPool.Status.HostSets = updatedHostSets
+}
+
+func (r *BareMetalPoolReconciler) createPrivateNetwork(ctx context.Context, networkName string) error {
+	log := logf.FromContext(ctx)
+
+	// Create OpenStack client
+	osClient, err := NewOpenstackClient()
+	if err != nil {
+		return fmt.Errorf("failed to create OpenStack client: %w", err)
+	}
+
+	// Check if network already exists
+	network, err := osClient.findNetworkByName(networkName)
+	if err == nil && network != nil {
+		log.Info("Network infrastructure already exists", "networkName", networkName)
+		return nil
+	}
+
+	// Create network infrastructure (network, subnet, router)
+	log.Info("Creating network infrastructure", "networkName", networkName)
+
+	// Extract pool name from network name (format: "network-{poolName}")
+	poolName := networkName
+	if len(networkName) > 8 && networkName[:8] == "network-" {
+		poolName = networkName[8:]
+	}
+
+	resources, err := osClient.CreateNetworkInfrastructure(poolName, "")
+	if err != nil {
+		return fmt.Errorf("failed to create network infrastructure: %w", err)
+	}
+
+	log.Info("Successfully created network infrastructure",
+		"networkID", resources.NetworkID,
+		"subnetID", resources.SubnetID,
+		"routerID", resources.RouterID,
+	)
+	return nil
+}
+
+func (r *BareMetalPoolReconciler) deletePrivateNetwork(ctx context.Context, networkName string) error {
+	log := logf.FromContext(ctx)
+
+	// Create OpenStack client
+	osClient, err := NewOpenstackClient()
+	if err != nil {
+		return fmt.Errorf("failed to create OpenStack client: %w", err)
+	}
+
+	// Extract pool name from network name (format: "network-{poolName}")
+	poolName := networkName
+	if len(networkName) > 8 && networkName[:8] == "network-" {
+		poolName = networkName[8:]
+	}
+
+	// Delete network infrastructure (router, subnet, network)
+	log.Info("Deleting network infrastructure", "poolName", poolName)
+	err = osClient.DeleteNetworkInfrastructure(poolName)
+	if err != nil {
+		return fmt.Errorf("failed to delete network infrastructure: %w", err)
+	}
+
+	log.Info("Successfully deleted network infrastructure")
+	return nil
 }
