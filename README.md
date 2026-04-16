@@ -69,6 +69,31 @@ options:
     - `addr` — Redis server address (default: `localhost:6379`)
     - `db` — Redis database number (default: `0`)
 
+### Profile
+
+The operator provides additional configuration to the BareMetalPool and each
+HostLease's host. Profiles are a collection of workflows to be ran when
+BareMetalPool and HostLease are created and deleted.
+
+**Configuration file:** `/etc/osac/profile/profile.yaml`
+
+**Example:**
+
+```yaml
+- name: imageProvisioning
+  hostSelector:
+    managedBy: ""
+    provisionState: available
+  bareMetalPoolTemplate: pool-network
+  hostTemplate: host-image
+```
+
+**Fields:**
+- `name` — name of the profile
+- `hostSelector` — map of key/value pairs that determine which hosts this profile applies to
+- `bareMetalPoolTemplate` — workflow executed when a BareMetalPool is created and deleted
+- `hostTemplate` — workflow executed when a HostLease is created and deleted
+
 ## Getting Started
 
 ### Prerequisites

@@ -43,6 +43,7 @@ import (
 	"github.com/osac-project/bare-metal-operator/internal/controller"
 	"github.com/osac-project/bare-metal-operator/internal/inventory"
 	"github.com/osac-project/bare-metal-operator/internal/lock"
+	"github.com/osac-project/bare-metal-operator/internal/profile"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -207,6 +208,12 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Load profile configuration
+	if err := profile.LoadProfilesFromFile("/etc/osac/profile/profile.yaml"); err != nil {
+		setupLog.Error(err, "unable to load profile config")
+		os.Exit(1)
+	}
 
 	// Read and parse inventory configuration
 	inventoryConfigData, err := os.ReadFile("/etc/osac/inventory/inventory.yaml")

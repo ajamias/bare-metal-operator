@@ -81,6 +81,16 @@ func (m *mockStatusWriter) Update(ctx context.Context, obj client.Object, opts .
 	return m.SubResourceWriter.Update(ctx, obj, opts...)
 }
 
+// getCondition returns the condition with the given type, or nil if not found
+func getCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
 var _ = Describe("BareMetalPool Controller", func() {
 	var (
 		reconciler    *BareMetalPoolReconciler
@@ -722,6 +732,80 @@ var _ = Describe("BareMetalPool Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hostLeaseList.Items).To(HaveLen(1))
 			Expect(hostLeaseList.Items[0].Spec.TemplateParameters).To(Equal(`{"key":"value"}`))
+		})
+	})
+
+	Context("When BareMetalPool references a non-existent profile", func() {
+		BeforeEach(func() {
+			testPoolName = "test-pool-missing-profile"
+			testPool = &osacv1alpha1.BareMetalPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testPoolName,
+					Namespace: testNamespace,
+				},
+				Spec: osacv1alpha1.BareMetalPoolSpec{
+					HostSets: []osacv1alpha1.BareMetalHostSet{
+						{
+							HostType: "fc430",
+							Replicas: 1,
+						},
+					},
+					Profile: &osacv1alpha1.ProfileSpec{
+						Name:               "non-existent-profile",
+						TemplateParameters: `{"key":"value"}`,
+					},
+				},
+			}
+
+			Expect(k8sClient.Create(ctx, testPool)).To(Succeed())
+		})
+
+		It("should set status condition to Failed with 'Profile does not exist' message", func() {
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      testPoolName,
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedPool := &osacv1alpha1.BareMetalPool{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      testPoolName,
+				Namespace: testNamespace,
+			}, updatedPool)).To(Succeed())
+
+			// Verify the Ready condition is set to False
+			readyCondition := getCondition(updatedPool.Status.Conditions, osacv1alpha1.BareMetalPoolConditionTypeReady)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal(osacv1alpha1.BareMetalPoolReasonFailed))
+			Expect(readyCondition.Message).To(Equal("Profile does not exist"))
+		})
+
+		It("should not create any HostLeases when profile doesn't exist", func() {
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      testPoolName,
+					Namespace: testNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedPool := &osacv1alpha1.BareMetalPool{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      testPoolName,
+				Namespace: testNamespace,
+			}, updatedPool)).To(Succeed())
+
+			// Verify no HostLeases were created
+			hostLeaseList := &osacv1alpha1.HostLeaseList{}
+			err = k8sClient.List(ctx, hostLeaseList,
+				client.InNamespace(testNamespace),
+				client.MatchingLabels{BareMetalPoolLabelKey: string(updatedPool.UID)},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hostLeaseList.Items).To(BeEmpty())
 		})
 	})
 

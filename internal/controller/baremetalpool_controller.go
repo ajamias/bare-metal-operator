@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/osac-project/bare-metal-operator/api/v1alpha1"
+	"github.com/osac-project/bare-metal-operator/internal/profile"
 )
 
 // BareMetalPoolReconciler reconciles a BareMetalPool object
@@ -112,6 +113,22 @@ func (r *BareMetalPoolReconciler) handleUpdate(ctx context.Context, bareMetalPoo
 
 	bareMetalPool.InitializeStatusConditions()
 
+	var currentProfile *profile.Profile
+	if bareMetalPool.Spec.Profile != nil {
+		profileName := bareMetalPool.Spec.Profile.Name
+		currentProfile = profile.Get(profileName)
+		if currentProfile == nil {
+			log.Info("Profile does not exist", "profile name", profileName)
+			bareMetalPool.SetStatusCondition(
+				v1alpha1.BareMetalPoolConditionTypeReady,
+				metav1.ConditionFalse,
+				"Profile does not exist",
+				v1alpha1.BareMetalPoolReasonFailed,
+			)
+			return ctrl.Result{}, nil
+		}
+	}
+
 	if controllerutil.AddFinalizer(bareMetalPool, BareMetalPoolFinalizer) {
 		if err := r.Update(ctx, bareMetalPool); err != nil {
 			log.Error(err, "Failed to add finalizer")
@@ -172,7 +189,7 @@ func (r *BareMetalPoolReconciler) handleUpdate(ctx context.Context, bareMetalPoo
 		delta := replicas - int32(len(currentHostLeases[hostType]))
 		if delta > 0 {
 			for range delta {
-				if err := r.createHostLeaseCR(ctx, bareMetalPool, hostType); err != nil {
+				if err := r.createHostLeaseCR(ctx, bareMetalPool, hostType, currentProfile); err != nil {
 					log.Error(err, "Failed to create HostLease CR")
 					bareMetalPool.SetStatusCondition(
 						v1alpha1.BareMetalPoolConditionTypeReady,
@@ -288,6 +305,7 @@ func (r *BareMetalPoolReconciler) createHostLeaseCR(
 	ctx context.Context,
 	bareMetalPool *v1alpha1.BareMetalPool,
 	hostType string,
+	currentProfile *profile.Profile,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -298,18 +316,12 @@ func (r *BareMetalPoolReconciler) createHostLeaseCR(
 		HostTypeLabelKey:      hostType,
 	}
 
-	selector := v1alpha1.HostSelectorSpec{
-		HostSelector: map[string]string{ // TODO: add selectors from profile
-			"managedBy":      "agent",
-			"provisionState": "active",
-		},
-	}
-	templateID := "default_template"
+	templateID := "noop"
+	selector := v1alpha1.HostSelectorSpec{}
 	templateParameters := ""
-	if bareMetalPool.Spec.Profile != nil {
-		if bareMetalPool.Spec.Profile.Name != "" {
-			templateID = "other_tempate" // TODO: get template id from profile
-		}
+	if currentProfile != nil {
+		templateID = currentProfile.Name
+		selector.HostSelector = currentProfile.HostSelector
 		templateParameters = bareMetalPool.Spec.Profile.TemplateParameters
 	}
 
